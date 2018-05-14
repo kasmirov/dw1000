@@ -1479,10 +1479,12 @@ static int dw1000_ptp_init(struct dw1000 *dw)
  */
 static void dw1000_timestamp(struct dw1000 *dw,
 			     const union dw1000_timestamp *time,
+			     struct dw1000_tsinfo *tsinfo,
 			     struct skb_shared_hwtstamps *hwtstamps)
 {
 	struct hires_counter *tc = &dw->ptp.tc;
 	struct timehires stamp;
+	cycle_t rawts;
 	cycle_t cc;
 
 	/* Get 5-byte timestamp */
@@ -1491,13 +1493,20 @@ static void dw1000_timestamp(struct dw1000 *dw,
 	/* Convert timestamp to nanoseconds */
 	mutex_lock(&dw->ptp.mutex);
 	stamp = hires_counter_cyc2time(tc, cc);
+	rawts = hires_counter_cyc2raw(tc, cc);
 	mutex_unlock(&dw->ptp.mutex);
+
+	/* Assign raw timestamp to tsinfo */
+	tsinfo->rawts = rawts;
 
 	/* Fill in kernel hardware timestamp */
 	memset(hwtstamps, 0, sizeof(*hwtstamps));
 	hwtstamps->hwtstamp = ns_to_ktime(stamp.tv_nsec);
 #ifdef HAVE_HWTSFRAC
 	hwtstamps->hwtsfrac = ns_to_ktime_frac(stamp.tv_frac);
+#endif
+#ifdef HAVE_HWTSINFO
+	memcpy(hwtstamps->hwtsinfo, tsinfo, sizeof(*tsinfo));
 #endif
 }
 
@@ -1510,27 +1519,23 @@ static void dw1000_timestamp(struct dw1000 *dw,
 static void dw1000_rx_link_qual(struct dw1000 *dw)
 {
 	struct dw1000_rx *rx = &dw->rx;
-	uint32_t status, finfo, power, noise, ampl1, ampl2, ampl3, rxpacc, rxpsr;
+	struct dw1000_tsinfo *tsi = &rx->tsinfo;
+	uint32_t status, finfo, index, power, noise;
+	uint32_t ampl1, ampl2, ampl3, rxpacc;
 	unsigned int fpnrj = 0, fppwr = 0, fpr = 0, snr = 0;
 	unsigned int psr = 0, hsrbp = 0;
 	cycle_t cc;
+
+	/* Clear Timestamp info */
+	memset(tsi, 0, sizeof(*tsi));
 
 	/* Assume frame and timestamp are valid */
 	rx->frame_valid = true;
 	rx->timestamp_valid = true;
 
-	/* Extract measurements */
+	/* Extract status */
 	finfo = le32_to_cpu(rx->finfo);
-	ampl1 = le16_to_cpu(rx->time.fp_ampl1);
-	ampl2 = le16_to_cpu(rx->fqual.fp_ampl2);
-	ampl3 = le16_to_cpu(rx->fqual.fp_ampl3);
-	power = le16_to_cpu(rx->fqual.cir_pwr);
-	noise = le16_to_cpu(rx->fqual.std_noise);
 	status = le32_to_cpu(rx->status);
-
-	/* Extra frame info */
-	rxpacc = DW1000_RX_FINFO_RXPACC(finfo);
-	rxpsr  = DW1000_RX_FINFO_RXPSR(finfo);
 
 	/* Extract buffer id */
 	hsrbp = DW1000_RX_STATUS_HSRBP(status);
@@ -1557,6 +1562,24 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	/* Remember timestamp */
 	dw->rx_timestamp[hsrbp] = cc;
 
+	/* Extract KPIs */
+	rxpacc = DW1000_RX_FINFO_RXPACC(finfo);
+	index = le16_to_cpu(rx->time.fp_index);
+	ampl1 = le16_to_cpu(rx->time.fp_ampl1);
+	ampl2 = le16_to_cpu(rx->fqual.fp_ampl2);
+	ampl3 = le16_to_cpu(rx->fqual.fp_ampl3);
+	power = le16_to_cpu(rx->fqual.cir_pwr);
+	noise = le16_to_cpu(rx->fqual.std_noise);
+
+	/* Assign timestamp information */
+	tsi->noise = noise;
+	tsi->rxpacc = rxpacc;
+	tsi->fp_index = index;
+	tsi->fp_ampl1 = ampl1;
+	tsi->fp_ampl2 = ampl2;
+	tsi->fp_ampl3 = ampl3;
+	tsi->cir_pwr = power;
+
 	/* Sanity check */
 	if (noise == 0 || power == 0 || rxpacc == 0 || ampl1 == 0) {
 		dev_warn_ratelimited(dw->dev, "timestamp ignored: "
@@ -1578,7 +1601,12 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	fpr = (fpnrj / power) >> (DW1000_RX_CIR_PWR_SCALE - 8);
 
 	/* The reported LQI is upper limited */
-	rx->lqi = (snr < DW1000_LQI_MAX) ? snr : DW1000_LQI_MAX;
+	rx->lqi = tsi->lqi = (snr < DW1000_LQI_MAX) ? snr : DW1000_LQI_MAX;
+
+	/* Assign calculated KPIs */
+	tsi->fp_pwr = fppwr;
+	tsi->snr = snr;
+	tsi->fpr = fpr;
 
 	/* Check Preamble length */
 	if (rxpacc < psr/DW1000_RXPACC_THRESHOLD) {
@@ -1801,6 +1829,7 @@ static void dw1000_tx_data_complete(void *context)
 static void dw1000_tx_irq(struct dw1000 *dw)
 {
 	struct dw1000_tx *tx = &dw->tx;
+	struct dw1000_tsinfo *tsi = &tx->tsinfo;
 	struct skb_shared_hwtstamps hwtstamps;
 	struct sk_buff *skb;
 	unsigned long flags;
@@ -1831,7 +1860,7 @@ static void dw1000_tx_irq(struct dw1000 *dw)
 	skb = tx->skb;
 	tx->skb = NULL;
 	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS)) {
-		dw1000_timestamp(dw, &tx->time, &hwtstamps);
+		dw1000_timestamp(dw, &tx->time, tsi, &hwtstamps);
 		skb_tstamp_tx(skb, &hwtstamps);
 	}
 	spin_unlock_irqrestore(&dw->tx_lock, flags);
@@ -2030,7 +2059,7 @@ static void dw1000_rx_irq(struct dw1000 *dw)
 
 	/* Record hardware timestamp, if viable */
 	if (rx->timestamp_valid)
-		dw1000_timestamp(dw, &rx->time.rx_stamp, skb_hwtstamps(skb));
+		dw1000_timestamp(dw, &rx->time.rx_stamp, &rx->tsinfo, skb_hwtstamps(skb));
 
 	/* Update data SPI message */
 	rx->rx_buffer.data.rx_buf = skb->data;
