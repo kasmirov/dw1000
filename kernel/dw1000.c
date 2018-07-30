@@ -1521,7 +1521,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	struct dw1000_rx *rx = &dw->rx;
 	struct dw1000_tsinfo *tsi = &rx->tsinfo;
 	uint32_t status, finfo, index, power, noise;
-	uint32_t ampl1, ampl2, ampl3, rxpacc;
+	uint32_t ampl1, ampl2, ampl3, rxpacc, ttcko;
 	unsigned int fpnrj = 0, fppwr = 0, fpr = 0, snr = 0;
 	unsigned int psr = 0, hsrbp = 0;
 	cycle_t cc;
@@ -1570,6 +1570,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	ampl3 = le16_to_cpu(rx->fqual.fp_ampl3);
 	power = le16_to_cpu(rx->fqual.cir_pwr);
 	noise = le16_to_cpu(rx->fqual.std_noise);
+	ttcko = le32_to_cpu(rx->ttcko.tofs);
 
 	/* Assign timestamp information */
 	tsi->noise = noise;
@@ -1579,6 +1580,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	tsi->fp_ampl2 = ampl2;
 	tsi->fp_ampl3 = ampl3;
 	tsi->cir_pwr = power;
+	tsi->ttcko = ttcko;
 
 	/* Sanity check */
 	if (noise == 0 || power == 0 || rxpacc == 0 || ampl1 == 0) {
@@ -1923,6 +1925,8 @@ static int dw1000_rx_prepare(struct dw1000 *dw)
 			 &rx->time, sizeof(rx->time));
 	dw1000_init_read(&rx->info, &rx->rx_fqual, DW1000_RX_FQUAL, 0,
 			 &rx->fqual, sizeof(rx->fqual));
+	dw1000_init_read(&rx->info, &rx->rx_ttcko, DW1000_RX_TTCKO, 0,
+			 &rx->ttcko, sizeof(rx->ttcko.raw));
 	dw1000_init_read(&rx->info, &rx->dig_diag, DW1000_DIG_DIAG,
 			 DW1000_EVC_OVR, &rx->evc_ovr, sizeof(rx->evc_ovr));
 	dw1000_init_read(&rx->info, &rx->sys_status, DW1000_SYS_STATUS, 0,
