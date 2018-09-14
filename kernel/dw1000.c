@@ -1710,6 +1710,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 	tsi->snr = snr;
 	tsi->fpr = fpr;
 
+#if 0
 	/* Check Preamble length */
 	if (rxpacc < psr/DW1000_RXPACC_THRESHOLD) {
 		dev_warn_ratelimited(dw->dev, "timestamp ignored: "
@@ -1717,7 +1718,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 				     rxpacc, psr/DW1000_RXPACC_THRESHOLD);
 		goto invalid;
 	}
-
+#endif
 	/* Check background noise */
 	if (noise > dw->noise_threshold) {
 		dev_warn_ratelimited(dw->dev, "timestamp ignored: "
@@ -1733,7 +1734,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 				     snr, dw->snr_threshold);
 		goto invalid;
 	}
-
+#if 0
 	/* Check F/P to Pwr Ratio */
 	if (fpr > DW1000_FPR_MAX) {
 		dev_warn_ratelimited(dw->dev, "timestamp ignored: "
@@ -1741,6 +1742,7 @@ static void dw1000_rx_link_qual(struct dw1000 *dw)
 				     fpr, DW1000_FPR_MAX);
 		goto invalid;
 	}
+#endif
 	if (fpr < dw->fpr_threshold) {
 		dev_warn_ratelimited(dw->dev, "timestamp ignored: "
 				     "F/P %u < %u\n",
