@@ -753,6 +753,10 @@ struct dw1000_tsinfo {
 	uint32_t ttcko;
 	/* Time tracking interval */
 	uint32_t ttcki;
+	/* Temperature */
+	uint16_t temp;
+	/* Voltage */
+	uint16_t volt;
 };
 
 /* Transmit descriptor */
